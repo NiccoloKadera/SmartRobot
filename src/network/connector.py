@@ -3,11 +3,8 @@ from abc import ABC, abstractmethod
 
 class Connector(ABC):
 
-    def __init__(self):
-        super().__init__()
-
     @abstractmethod
-    def connect(self):
+    def connect(self, host: str | None = None, port: int | None = None):
         pass
 
     @abstractmethod
@@ -15,9 +12,12 @@ class Connector(ABC):
         pass
 
     @abstractmethod
-    def send(self):
+    def send(self, topic: str, payload, message_type: str = "std_msgs/String"):
         pass
 
     @abstractmethod
     def send_test(self):
+        pass
+
+    def close(self):
         pass
