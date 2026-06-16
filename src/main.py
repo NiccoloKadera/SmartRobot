@@ -153,6 +153,16 @@ class MainRemote:
     def _on_key_press(self, event):
         key = event.keysym.lower()
         if key in {"w", "a", "s", "d"}:
+            print(f"Key pressed: {key}") # Local PC 
+            try:
+                # Call your existing send method!
+                self.connector.send(
+                    topic="/remote_debug", 
+                    payload=f"Pressed key: {key.upper()}", 
+                    message_type="std_msgs/msg/String" # Set to ROS 2 standard
+                )
+            except (ConnectionError, RuntimeError, OSError) as exc:
+                print(f"Debug pub failed: {exc}")
             self.pressed_keys.add(key)
 
     def _on_key_release(self, event):

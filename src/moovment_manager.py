@@ -29,7 +29,8 @@ class MoovmentManager:
             "linear": {"x": linear_x, "y": linear_y, "z": 0.0},
             "angular": {"x": 0.0, "y": 0.0, "z": angular_z},
         }
-        self.connector.send(self.cmd_vel_topic, payload, "geometry_msgs/Twist")
+        # Corretto il tipo di messaggio da ROS 1 a ROS 2 ("geometry_msgs/msg/Twist")
+        self.connector.send(self.cmd_vel_topic, payload, "geometry_msgs/msg/Twist")
 
     def stop(self):
         self.publish_twist()
@@ -71,3 +72,4 @@ class MoovmentManager:
             linear_x=forward * self.linear_speed,
             linear_y=sideways * self.lateral_speed,
         )
+        

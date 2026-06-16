@@ -66,7 +66,7 @@ class RoslibpyConnector(Connector):
 
     def send(self, topic: str, payload, message_type: str = "std_msgs/String"):
         ros_topic = self._get_topic(topic, message_type)
-        if message_type == "std_msgs/String":
+        if message_type in ("std_msgs/String", "std_msgs/msg/String"):
             message = roslibpy.Message({"data": str(payload)})
         elif isinstance(payload, dict):
             message = roslibpy.Message(payload)
