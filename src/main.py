@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -16,7 +15,7 @@ class MainRemote:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("SmartRobot Remote")
-        self.root.geometry("520x300")
+        self.root.geometry("520x360")
         self.root.configure(bg="#111827")
 
         self.connector = RoslibpyConnector()
@@ -28,10 +27,12 @@ class MainRemote:
         default_host, default_port = self._load_most_recent()
         self.host_var = tk.StringVar(value=default_host or "127.0.0.1")
         self.port_var = tk.StringVar(value=str(default_port or 9090))
+        
+        # Campo dinamico per decidere il nome del robot basandoci sulla tua ROS topic list
+        self.robot_var = tk.StringVar(value="robot1")
         self.status_var = tk.StringVar(value="Non connesso")
 
         self._build_ui()
-        # Use bind_all so the window receives key events even if a widget has focus
         self.root.bind_all("<KeyPress>", self._on_key_press)
         self.root.bind_all("<KeyRelease>", self._on_key_release)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -49,7 +50,7 @@ class MainRemote:
 
         subtitle = tk.Label(
             self.root,
-            text="Controllo con WASD + trasversali da questa finestra Tkinter",
+            text="Controllo OmniBlue flotta: WASD (Traslazione) + Q/E (Rotazione)",
             bg="#111827",
             fg="#9ca3af",
             font=("Helvetica", 11),
@@ -65,6 +66,9 @@ class MainRemote:
         tk.Label(form, text="Port", bg="#111827", fg="#e5e7eb").grid(row=1, column=0, sticky="w", padx=6, pady=4)
         tk.Entry(form, textvariable=self.port_var, width=20).grid(row=1, column=1, padx=6, pady=4)
 
+        tk.Label(form, text="Seleziona Robot (es. car2)", bg="#111827", fg="#e5e7eb").grid(row=2, column=0, sticky="w", padx=6, pady=4)
+        tk.Entry(form, textvariable=self.robot_var, width=20).grid(row=2, column=1, padx=6, pady=4)
+
         actions = tk.Frame(self.root, bg="#111827")
         actions.pack(pady=14)
 
@@ -74,7 +78,7 @@ class MainRemote:
 
         help_text = tk.Label(
             self.root,
-            text="W/S avanti-indietro, A/D sinistra-destra. I movimenti diagonali si ottengono tenendo premuti due tasti.",
+            text="W/S avanti-indietro, A/D laterale. Q/E rotazione. Tieni attiva la finestra per guidare.",
             bg="#111827",
             fg="#d1d5db",
             wraplength=460,
@@ -97,11 +101,14 @@ class MainRemote:
         try:
             host = self.host_var.get().strip()
             port = int(self.port_var.get().strip())
+            robot_name = self.robot_var.get().strip().lower()
+            
+            # Genera il topic corretto dinamicamente prendendo il valore inserito nel form
+            self.movement_manager.cmd_vel_topic = f"/{robot_name}/cmd_vel"
             self.movement_manager.connect(host, port)
             self.connected = True
-            self.status_var.set(f"Connesso a {host}:{port}")
+            self.status_var.set(f"Connesso a {host}:{port} ({robot_name})")
             self.root.focus_force()
-            # Save the successful connection
             try:
                 self._save_connection(host, port)
             except (OSError, json.JSONDecodeError, ValueError):
@@ -129,7 +136,6 @@ class MainRemote:
                 data = json.load(f)
             if not data:
                 return None, None
-            # data is a list of entries with keys: host, port, date
             latest = max(data, key=lambda e: e.get("date", ""))
             return latest.get("host"), int(latest.get("port", 9090))
         except (OSError, json.JSONDecodeError, ValueError, TypeError):
@@ -144,7 +150,6 @@ class MainRemote:
                     data = json.load(f)
             except (OSError, json.JSONDecodeError, ValueError, TypeError):
                 data = []
-        # append and keep last 20
         data.append(entry)
         data = data[-20:]
         with self.recent_path.open("w", encoding="utf-8") as f:
@@ -152,17 +157,18 @@ class MainRemote:
 
     def _on_key_press(self, event):
         key = event.keysym.lower()
-        if key in {"w", "a", "s", "d"}:
-            print(f"Key pressed: {key}") # Local PC 
-            try:
-                # Call your existing send method!
-                self.connector.send(
-                    topic="/remote_debug", 
-                    payload=f"Pressed key: {key.upper()}", 
-                    message_type="std_msgs/msg/String" # Set to ROS 2 standard
-                )
-            except (ConnectionError, RuntimeError, OSError) as exc:
-                print(f"Debug pub failed: {exc}")
+        if key in {"w", "a", "s", "d", "q", "e"}:
+            if key not in self.pressed_keys:
+                print(f"Key pressed: {key}")
+                if self.connected:
+                    try:
+                        self.connector.send(
+                            topic="/remote_debug", 
+                            payload=f"Pressed key: {key.upper()}", 
+                            message_type="std_msgs/msg/String"
+                        )
+                    except (ConnectionError, RuntimeError, OSError) as exc:
+                        print(f"Debug pub failed: {exc}")
             self.pressed_keys.add(key)
 
     def _on_key_release(self, event):
@@ -187,4 +193,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

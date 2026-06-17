@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Path to log file
-LOG_FILE="/home/ubuntu/rosbridge_startup.log"
+LOG_FILE="/home/ubuntu/roslibby/rosbridge_startup.log"
 
 echo "=== Startup Script Initiated: $(date) ===" >> "$LOG_FILE"
 

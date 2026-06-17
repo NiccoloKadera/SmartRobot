@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=ubuntu
-ExecStart=/home/ubuntu/start_rosbridge.sh
+ExecStart=/home/ubuntu/roslibby/start_rosbridge.sh
 Restart=on-failure
 RestartSec=5
 

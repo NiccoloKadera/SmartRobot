@@ -3,3 +3,14 @@ ros2 topic list
 ros2 launch rosbridge_server rosbridge_websocket_launch.xml
 
 ros2 topic echo /remote_debug
+
+
+
+# 1. Ricarica la configurazione di systemd per fargli vedere il nuovo servizio
+sudo systemctl daemon-reload
+
+# 2. Abilita il servizio all'avvio automatico
+sudo systemctl enable rosbridge.service
+
+# 3. Avvia il servizio immediatamente (senza dover riavviare il Raspberry adesso)
+sudo systemctl start rosbridge.service

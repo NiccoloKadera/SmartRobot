@@ -4,10 +4,11 @@ import json
 import platform
 from pathlib import Path
 
+# Importiamo la libreria ufficiale con il suo nome reale
 import roslibpy
 
 try:
-    from .connector import Connector
+    from network.connector import Connector
 except ImportError:
     from connector import Connector
 
