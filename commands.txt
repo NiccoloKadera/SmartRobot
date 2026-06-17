@@ -14,3 +14,5 @@ sudo systemctl enable rosbridge.service
 
 # 3. Avvia il servizio immediatamente (senza dover riavviare il Raspberry adesso)
 sudo systemctl start rosbridge.service
+
+sudo systemctl status rosbridge.service

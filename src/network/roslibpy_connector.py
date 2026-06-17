@@ -4,7 +4,6 @@ import json
 import platform
 from pathlib import Path
 
-# Importiamo la libreria ufficiale con il suo nome reale
 import roslibpy
 
 try:
@@ -61,7 +60,9 @@ class RoslibpyConnector(Connector):
         ros_topic = self._topics.get(key)
         if ros_topic is None:
             ros_topic = roslibpy.Topic(self.client, topic, message_type)
-            ros_topic.advertise()
+            # Effettua l'advertise solo se è un topic su cui inviamo dati
+            if not message_type.startswith("sensor_msgs"):
+                ros_topic.advertise()
             self._topics[key] = ros_topic
         return ros_topic
 
@@ -74,6 +75,13 @@ class RoslibpyConnector(Connector):
         else:
             raise TypeError("Payload must be a dict for non-string ROS messages")
         ros_topic.publish(message)
+
+    def listen(self, topic: str, callback, message_type: str = "sensor_msgs/msg/LaserScan"):
+        """Si iscrive a un topic di ROS 2 e inoltra ogni messaggio in background alla funzione callback."""
+        self._require_client()
+        ros_topic = self._get_topic(topic, message_type)
+        ros_topic.subscribe(callback)
+        print(f"Sottoscritto con successo al topic: {topic}")
 
     def show_connection(self):
         if self.client is None:
@@ -88,6 +96,7 @@ class RoslibpyConnector(Connector):
     def close(self):
         for ros_topic in self._topics.values():
             try:
+                ros_topic.unsubscribe()
                 ros_topic.unadvertise()
             except (AttributeError, RuntimeError, OSError):
                 pass
