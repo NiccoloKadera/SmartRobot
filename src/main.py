@@ -29,7 +29,7 @@ class MainRemote:
         self.port_var = tk.StringVar(value=str(default_port or 9090))
         
         # Campo dinamico per decidere il nome del robot basandoci sulla tua ROS topic list
-        self.robot_var = tk.StringVar(value="robot1")
+        self.robot_var = tk.StringVar(value="car2")
         self.status_var = tk.StringVar(value="Non connesso")
 
         self._build_ui()
