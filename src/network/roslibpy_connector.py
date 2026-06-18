@@ -19,6 +19,7 @@ class RoslibpyConnector(Connector):
     def __init__(self):
         self.client: roslibpy.Ros | None = None
         self._topics: dict[tuple[str, str], roslibpy.Topic] = {}
+        self._subscriptions: dict[tuple[str, str], roslibpy.Topic] = {}
         self.host: str | None = None
         self.port: int | None = None
         super().__init__()
@@ -75,6 +76,37 @@ class RoslibpyConnector(Connector):
             raise TypeError("Payload must be a dict for non-string ROS messages")
         ros_topic.publish(message)
 
+    def subscribe(self, topic: str, message_type: str, callback):
+        """Subscribe to a ROS topic through rosbridge.
+
+        callback receives the decoded ROS message as a Python dict.
+        The returned roslibpy.Topic can be passed to unsubscribe().
+        """
+        self._require_client()
+        key = (topic, message_type)
+        ros_topic = self._subscriptions.get(key)
+
+        # If we already had a subscription for this key, replace the callback cleanly.
+        if ros_topic is not None:
+            try:
+                ros_topic.unsubscribe()
+            except (AttributeError, RuntimeError, OSError):
+                pass
+
+        ros_topic = roslibpy.Topic(self.client, topic, message_type)
+        ros_topic.subscribe(callback)
+        self._subscriptions[key] = ros_topic
+        return ros_topic
+
+    def unsubscribe(self, topic: str, message_type: str):
+        key = (topic, message_type)
+        ros_topic = self._subscriptions.pop(key, None)
+        if ros_topic is not None:
+            try:
+                ros_topic.unsubscribe()
+            except (AttributeError, RuntimeError, OSError):
+                pass
+
     def show_connection(self):
         if self.client is None:
             print("ROS bridge not connected")
@@ -86,6 +118,13 @@ class RoslibpyConnector(Connector):
         self.send("/test/topic", f"Hello from {machine_name}!")
 
     def close(self):
+        for ros_topic in self._subscriptions.values():
+            try:
+                ros_topic.unsubscribe()
+            except (AttributeError, RuntimeError, OSError):
+                pass
+        self._subscriptions.clear()
+
         for ros_topic in self._topics.values():
             try:
                 ros_topic.unadvertise()
