@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import os
 import math
+import numpy as np
 
 import tkinter as tk
 from tkinter import messagebox
@@ -22,8 +23,9 @@ from network.roslibpy_connector import RoslibpyConnector
 class MainRemote:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("SmartRobot Remote")
-        self.root.geometry("900x450" if os.getenv('SHOW_LIDAR', 'false').lower() in ('true', '1') else "520x360")
+        self.root.title("SmartRobot Remote & Local Mapping")
+        # Allarghiamo la finestra per mostrare i due grafici affiancati
+        self.root.geometry("1100x480" if os.getenv('SHOW_LIDAR', 'true').lower() in ('true', '1') else "520x360")
         self.root.configure(bg="#111827")
 
         self.connector = RoslibpyConnector()
@@ -42,16 +44,16 @@ class MainRemote:
         # --- SETUP GRAPHICS COMPONENT ---
         self.show_lidar_enabled = os.getenv('SHOW_LIDAR', 'true').lower() in ('true', '1')
         self.canvas = None
-        self.ax = None
+        self.ax_lidar = None
+        self.ax_map = None
 
         self._build_ui()
-        self.root.bind_all("<KeyPress> ", self._on_key_press)
+        self.root.bind_all("<KeyPress>", self._on_key_press)
         self.root.bind_all("<KeyRelease>", self._on_key_release)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(40, self._tick)
 
     def _build_ui(self):
-        # Layout principale sdoppiato a pannelli se abilitato il radar grafico
         main_container = tk.Frame(self.root, bg="#111827")
         main_container.pack(fill="both", expand=True)
 
@@ -83,16 +85,24 @@ class MainRemote:
         status = tk.Label(left_panel, textvariable=self.status_var, bg="#111827", fg="#34d399", font=("Helvetica", 11, "bold"))
         status.pack(pady=10)
 
-        # --- SEZIONE MATPLOTLIB (POLAR RADAR) ---
+        # --- SEZIONE MATPLOTLIB DOPPIA (RADAR + MAPPA GENERATA LOCALMENTE) ---
         if self.show_lidar_enabled:
             right_panel = tk.Frame(main_container, bg="#1f2937")
             right_panel.pack(side="right", fill="both", expand=True, padx=10, pady=10)
 
-            fig = Figure(figsize=(4, 4), facecolor='#1f2937')
-            self.ax = fig.add_subplot(111, polar=True)
-            self.ax.set_facecolor('#111827')
-            self.ax.tick_params(colors='#9ca3af', labelsize=8)
-            self.ax.grid(True, color='#374151')
+            fig = Figure(figsize=(7, 3.5), facecolor='#1f2937')
+            
+            # Subplot 1: LiDAR Polare
+            self.ax_lidar = fig.add_subplot(121, polar=True)
+            self.ax_lidar.set_facecolor('#111827')
+            self.ax_lidar.tick_params(colors='#9ca3af', labelsize=8)
+            self.ax_lidar.grid(True, color='#374151')
+            
+            # Subplot 2: Mappa ad Occupazione Cartesiana generata sul PC
+            self.ax_map = fig.add_subplot(122)
+            self.ax_map.set_facecolor('#111827')
+            self.ax_map.tick_params(colors='#9ca3af', labelsize=8)
+            self.ax_map.grid(True, color='#374151')
 
             self.canvas = FigureCanvasTkAgg(fig, master=right_panel)
             self.canvas.get_tk_widget().pack(fill="both", expand=True)
@@ -107,10 +117,12 @@ class MainRemote:
             
             self.movement_manager.cmd_vel_topic = f"/{robot_name}/cmd_vel"
             self.movement_manager.connect(host, port)
-            self.movement_manager.start_lidar_subscription(scan_topic="/scan")
+            
+            # Iscrizione a LiDAR e Odometria simultanea
+            self.movement_manager.start_subscriptions(scan_topic="/scan", odom_topic=f"/{robot_name}/odom")
             
             self.connected = True
-            self.status_var.set("Connesso + LiDAR attivo")
+            self.status_var.set("Connesso\nMappa Locale Attiva")
             self.root.focus_force()
             self._save_connection(host, port)
         except Exception as exc:
@@ -118,37 +130,51 @@ class MainRemote:
             self.status_var.set("Connessione fallita")
             messagebox.showerror("ROS Error", str(exc))
 
-    def _update_lidar_plot(self):
-        """Aggiorna il disegno del radar in coordinate polari."""
-        if not self.show_lidar_enabled or self.ax is None:
+    def _update_plots(self):
+        """Aggiorna la grafica del radar polare e della mappa cartesiana integrata."""
+        if not self.show_lidar_enabled or self.ax_lidar is None or self.ax_map is None:
             return
 
-        ranges = self.movement_manager.raw_ranges
+        mgr = self.movement_manager
+        ranges = mgr.raw_ranges
         if not ranges:
             return
 
-        self.ax.clear()
-        self.ax.grid(True, color='#374151')
-
-        # Calcola gli angoli associati a ciascun raggio laser
+        # --- 1. AGGIORNAMENTO RADAR LIDAR ---
+        self.ax_lidar.clear()
+        self.ax_lidar.grid(True, color='#374151')
         num_points = len(ranges)
         angles = [i * (2 * math.pi / num_points) for i in range(num_points)]
+        
+        self.ax_lidar.scatter(angles, ranges, s=2, color='#34d399', alpha=0.7)
+        self.ax_lidar.scatter([0], [0], s=120, color='#3b82f6', zorder=5)
 
-        # Disegna la nuvola totale di punti LiDAR (punti verdi)
-        self.ax.scatter(angles, ranges, s=2, color='#34d399', alpha=0.7, label='LiDAR Scan')
-
-        # Disegna il robot al centro (cerchio blu)
-        self.ax.scatter([0], [0], s=120, color='#3b82f6', zorder=5, label='Robot Center')
-
-        # Evidenzia il punto scelto dall'algoritmo (X rossa sul muro)
-        chosen_idx = self.movement_manager.chosen_point_idx
+        chosen_idx = mgr.chosen_point_idx
         if chosen_idx is not None and chosen_idx < len(ranges):
             r_val = ranges[chosen_idx]
-            theta_val = angles[chosen_idx]
             if r_val is not None and r_val != float('inf'):
-                self.ax.scatter([theta_val], [r_val], s=150, color='#ef4444', marker='X', zorder=10, label='Target Wall')
+                self.ax_lidar.scatter([angles[chosen_idx]], [r_val], s=150, color='#ef4444', marker='X', zorder=10)
+        
+        self.ax_lidar.set_rmax(max([r for r in ranges if r is not None and r < 10] or [4.0]))
+        self.ax_lidar.set_title("LiDAR Scan Polare", color="white", fontsize=10)
 
-        self.ax.set_rmax(max([r for r in ranges if r is not None and r < 10] or [4.0]))
+        # --- 2. AGGIORNAMENTO MAPPA CARTESIANA LOCAL-SLAM ---
+        self.ax_map.clear()
+        self.ax_map.grid(True, color='#374151')
+        
+        # Rendering della matrice della mappa
+        extent_val = [-mgr.map_size_meters/2, mgr.map_size_meters/2, -mgr.map_size_meters/2, mgr.map_size_meters/2]
+        self.ax_map.imshow(mgr.custom_map, cmap="gray_r", origin="lower", extent=extent_val, vmin=0, vmax=100)
+        
+        # Disegna il robot corrente sulla mappa (Punto Blu)
+        self.ax_map.plot(mgr.robot_x, mgr.robot_y, 'bo', markersize=8)
+        
+        # Disegna una freccia rossa per indicare la direzione (Yaw) del robot
+        self.ax_map.arrow(mgr.robot_x, mgr.robot_y, 0.4 * math.cos(mgr.robot_yaw), 0.4 * math.sin(mgr.robot_yaw),
+                          head_width=0.15, head_length=0.15, fc='#ef4444', ec='#ef4444', zorder=5)
+        
+        self.ax_map.set_title(f"Mappa Locale PC (X: {mgr.robot_x:.2f}, Y: {mgr.robot_y:.2f})", color="white", fontsize=10)
+        
         self.canvas.draw()
 
     def stop(self):
@@ -183,7 +209,6 @@ class MainRemote:
 
     def _on_key_press(self, event):
         key = event.keysym.lower()
-        print(f'Key pressed: {key}')
         if key in {"w", "a", "s", "d", "q", "e"}:
             self.pressed_keys.add(key)
 
@@ -195,17 +220,14 @@ class MainRemote:
         if self.connected:
             try:
                 self.movement_manager.apply_pressed_keys(self.pressed_keys)
-                # Forza il refresh del grafico ad ogni ciclo di calcolo
-                self._update_lidar_plot()
+                self._update_plots()
             except Exception as exc:
                 self.connected = False
                 self.status_var.set(f"ROS Error: {exc}")
                 self.pressed_keys.clear()
         self.root.after(40, self._tick)
 
-def main():
-    app = MainRemote()
-    app.root.mainloop()
 
 if __name__ == "__main__":
-    main()
+    app = MainRemote()
+    app.root.mainloop()
