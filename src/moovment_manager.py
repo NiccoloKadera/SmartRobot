@@ -25,20 +25,20 @@ class MoovmentManager:
         self.lateral_speed = linear_speed if lateral_speed is None else lateral_speed
         self.angular_speed = angular_speed
 
-        # --- CONTINUOUS CONTROL PARAMETERS ---
-        self.Kp_yaw = 0.08                  # Gain for orientation (angle) correction
-        self.Kp_lat = 0.15                  # Gain for position (distance to wall) correction
+        # --- PARAMETRI DI CONTROLLO CONTINUO (PID / PROPORZIONALE) ---
+        self.Kp_yaw = 0.08                  # Guadagno per correggere l'orientamento (angolo)
+        self.Kp_lat = 0.15                  # Guadagno per correggere la posizione (distanza dal muro)
         
-        self.current_lidar_angle = 0.0      # Instantaneous wall angle from line-tracking
-        self.target_lidar_angle = 0.0       # Ideal wall angle locked when A/D is pressed
+        self.current_lidar_angle = 0.0      # Angolo istantaneo calcolato in background dal LiDAR
+        self.target_lidar_angle = 0.0       # Angolo ideale iniziale fissato al click di A/D
         
-        self.current_wall_distance = 0.0    # Instantaneous minimum distance to the wall
-        self.target_wall_distance = 0.0     # Ideal distance locked when A/D is pressed
+        self.current_wall_distance = 0.0    # Distanza reale istantanea calcolata dal LiDAR
+        self.target_wall_distance = 0.0     # Distanza ideale iniziale fissata al click di A/D
         
-        self.is_correcting = False          # Tracking flag for the closed-loop activation state
-        self._last_print_time = 0.0         # Console print throttle timer
+        self.is_correcting = False          # Flag di attivazione dell'anello chiuso (Solo per A/D)
+        self._last_print_time = 0.0         # Timer per limitare i log in console
 
-        # Telemetry variables for the Matplotlib live plot
+        # Variabili di telemetria usate da main.py per disegnare il grafico radar
         self.raw_ranges: list[float] = []   
         self.chosen_point_idx: int | None = None  
 
@@ -46,14 +46,15 @@ class MoovmentManager:
         self.connector.connect(host, port)
 
     def start_lidar_subscription(self, scan_topic: str = "/scan"):
+        """Si iscrive al topic del LiDAR per aggiornare costantemente il grafico in background."""
         try:
             self.connector.listen(topic=scan_topic, callback=self._handle_lidar_data)
-            print("[LiDAR] Subscription active. Continuous tracking and GUI plotting enabled.")
+            print("[LiDAR] Sottoscrizione attiva. Grafico e tracking di sfondo abilitati.")
         except Exception as e:
-            print(f"[LiDAR] ERROR: {e}")
+            print(f"[LiDAR] ERRORE durante la sottoscrizione: {e}")
 
     def _handle_lidar_data(self, message: dict):
-        """Processes LiDAR data continuously to update the GUI plot and track spatial metrics."""
+        """Elabora SEMPRE i dati del LiDAR per aggiornare la GUI, evitando salti di riferimento."""
         ranges = message.get("ranges", [])
         if not ranges:
             return
@@ -62,6 +63,7 @@ class MoovmentManager:
         num_points = len(ranges)
         angle_increment = (2 * math.pi) / num_points
 
+        # Finestra geometrica centrata sui 90 gradi (sinistra del robot)
         idx_center_left = int(num_points * 0.25)
         window = int(num_points * 0.06)  
 
@@ -74,10 +76,12 @@ class MoovmentManager:
             if 0 <= i < num_points:
                 r = ranges[i]
                 if r is not None and 0.1 < r < 6.0:
+                    # Estrae la distanza minima reale dalla parete laterale
                     if r < min_distance:
                         min_distance = r
                     
                     theta = i * angle_increment
+                    # Trasformazione in coordinate cartesiane locali per la regressione della linea
                     X_pts.append(r * math.cos(theta))
                     Y_pts.append(r * math.sin(theta))
                     valid_indices.append(i)
@@ -95,7 +99,9 @@ class MoovmentManager:
             denominatore = (n * sum_xx - sum_x * sum_x)
             if abs(denominatore) > 1e-5:
                 m = (n * sum_xy - sum_x * sum_y) / denominatore
+                # Aggiorna l'angolo attuale stimato della parete
                 self.current_lidar_angle = math.degrees(math.atan(m))
+                # Seta l'indice centrale della linea per disegnare stabilmente la X rossa nel radar
                 self.chosen_point_idx = valid_indices[len(valid_indices) // 2]
 
     def publish_twist(self, linear_x: float = 0.0, linear_y: float = 0.0, angular_z: float = 0.0):
@@ -107,7 +113,7 @@ class MoovmentManager:
 
     def stop(self):
         if self.is_correcting:
-            print("[CONTROL] Lateral closed-loop deactivated.")
+            print("[CONTROL] Movimento trasversale terminato. Disattivazione anello chiuso.")
         self.is_correcting = False
         self.publish_twist()
 
@@ -126,42 +132,40 @@ class MoovmentManager:
         vy_input = sideways * self.lateral_speed
         yaw_output = rotation * self.angular_speed
 
-        # --- CONTINUOUS CLOSED-LOOP CONTROL ONLY ON PURE STRAFING (A / D) ---
+        # --- ANELLO CHIUSO ATTIVO SOLO SU MOVIMENTI TRASVERSALI PURI (A / D) ---
         if forward == 0 and rotation == 0 and abs(vy_input) > 0.01:
-            # First key strike: Lock the baseline physical coordinates from the active background tracking
+            # Al primissimo frame in cui premi il tasto, congela i riferimenti esatti letti dallo sfondo
             if not self.is_correcting:
                 self.target_lidar_angle = self.current_lidar_angle
                 self.target_wall_distance = self.current_wall_distance
                 self.is_correcting = True
-                print(f"\n[CLOSED-LOOP ACTIVATED] Target Distance: {self.target_wall_distance:.2f}m | Target Angle: {self.target_lidar_angle:.2f}°")
+                print(f"\n[TARGET AGGANCIATO] Distanza: {self.target_wall_distance:.2f}m | Angolo: {self.target_lidar_angle:.2f}°")
 
-            # 1. Compute Angular Deviation Error
+            # 1. Correzione dell'Inclinazione (Yaw) - Soglia > 10 gradi
             angular_error = self.target_lidar_angle - self.current_lidar_angle
             while angular_error > 180:  angular_error -= 360
             while angular_error < -180: angular_error += 360
             
-            # Apply Angular Correction deadzone threshold (> 10 degrees)
             if abs(angular_error) > 10.0:
                 yaw_output = angular_error * self.Kp_yaw
             else:
                 yaw_output = 0.0
 
-            # 2. Compute Distance Translation Error (Drifting adjustment)
+            # 2. Correzione dello scostamento di traiettoria (Posizione laterale Vy)
+            # Se scivolando trasversalmente il robot si allontana o avvicina di oltre 2 centimetri:
             distance_error = self.target_wall_distance - self.current_wall_distance
-            
-            # Apply correction to linear_y vector if the translation drift exceeds 2 centimeters
             if abs(distance_error) > 0.02:
                 vy_input += (distance_error * self.Kp_lat)
 
-            # Throttle telemetry logs to the console every 200ms
+            # Stampa di debug temporizzata ogni 200ms
             now = time.time()
             if now - self._last_print_time > 0.2:
-                print(f"[TRACKING] Dist Error: {distance_error:.3f}m -> Vy: {vy_input:.3f} | Angle Error: {angular_error:.1f}° -> Yaw: {yaw_output:.3f}")
+                print(f"[CORREZIONE] Err Dist: {distance_error:.3f}m -> Vy: {vy_input:.3f} | Err Angolo: {angular_error:.1f}° -> Yaw: {yaw_output:.3f}")
                 self._last_print_time = now
 
         else:
-            # If driving straight (W/S) or manuals rotations (Q/E) occur, disable control interference entirely
+            # Se guidi dritto (W/S) o ruoti manualmente (Q/E), disattiva qualsiasi interferenza sui motori
             self.is_correcting = False
 
-        # Publish execution array to ROS 2
+        # Invia il vettore cinematico finale a ROS 2
         self.publish_twist(linear_x=vx_input, linear_y=vy_input, angular_z=yaw_output)
